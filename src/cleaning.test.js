@@ -24,14 +24,20 @@ describe("cleaning rules", () => {
     expect(result.rows[1]).toEqual(["A", "018*****577", "jas*******261@gmail.com", "00200000"]);
   });
   it("sanitizes download names", () => expect(safeBaseName("my:file.xlsx")).toBe("my-file"));
-  it("formats correctly for web portal without masking", () => {
+  it("formats correctly for web portal without masking and with robust cleanups", () => {
     const grid = [
       [" Student Name ", " PHONE", "Email ", "ROLL", " paid amount "],
-      ["Mostafa Kamal", " +88-01712-345 678 ", "jasminalam261@gmail.com", "27-26048-1", 3999]
+      ["Mostafa Kamal", " +88-01712-345 678 ", "jasminalam261@gmail.com", "27-26048-1", 3999],
+      ["Katha Chowdhury undefined", "1864365040", "katha@gmail.com", "00261143", 0],
+      ["Udoy Kar Ayon", "UdoyKarAyon", "udoy@gmail.com", "00271190", 0],
+      ["Samiha Tafannum Tursa", "01845801236/01817726343/01878896804", "samiha@gmail.com", "00271136", 0]
     ];
     const result = formatForWebPortal(grid, "Morning");
     expect(result.rows[0]).toEqual(["roll_number", "name", "mobile", "batch"]);
-    expect(result.rows[1]).toEqual(["27260481", "Mostafa Kamal", "8801712345678", "Morning"]);
+    expect(result.rows[1]).toEqual(["27260481", "Mostafa Kamal", "01712345678", "Morning"]);
+    expect(result.rows[2]).toEqual(["00261143", "Katha Chowdhury", "01864365040", "Morning"]); // trailing undefined stripped, 10-digit padded
+    expect(result.rows[3]).toEqual(["00271190", "Udoy Kar Ayon", "", "Morning"]); // text stripped
+    expect(result.rows[4]).toEqual(["00271136", "Samiha Tafannum Tursa", "01845801236", "Morning"]); // multiple split
   });
 });
 

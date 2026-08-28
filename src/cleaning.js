@@ -107,17 +107,36 @@ export function formatForWebPortal(grid, defaultBatch = "") {
       warnings.push(`Row ${r + 1}: ${cleanedRollResult.warning}`);
     }
 
-    // Clean mobile number (do not mask): remove spaces, hyphens, parentheses, leading '+'
+    // Clean name: strip trailing " undefined" if any
+    const nameVal = rawName != null ? String(rawName).replace(/\s+undefined$/i, "").trim() : "";
+
+    // Clean mobile number (do not mask)
     let mobileVal = "";
     if (rawMobile != null && String(rawMobile).trim() !== "" && String(rawMobile).trim().toUpperCase() !== "N/A") {
-      mobileVal = String(rawMobile).replace(/[-\s()+]/g, "").trim();
-    } else {
-      mobileVal = isBlankOrNA(rawMobile) ? "" : String(rawMobile).trim();
+      let cleaned = String(rawMobile).trim();
+      
+      // Remove leading country code: +880, 880, +88, 88
+      cleaned = cleaned.replace(/^(\+?880|^\+?88)/, "");
+      
+      // Strip all non-digit characters
+      cleaned = cleaned.replace(/[^0-9]/g, "");
+      
+      // If it's a 10-digit number starting with 1, 3, 4, 5, 6, 7, 8, or 9, pad it with a leading "0"
+      if (/^[13456789]\d{9}$/.test(cleaned)) {
+        cleaned = "0" + cleaned;
+      }
+      
+      // Keep only the first 11 digits
+      if (cleaned.length > 11) {
+        cleaned = cleaned.slice(0, 11);
+      }
+      
+      mobileVal = cleaned;
     }
 
     webRows.push([
       rollVal,
-      rawName != null ? String(rawName).trim() : "",
+      nameVal,
       mobileVal,
       defaultBatch
     ]);
