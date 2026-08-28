@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanGrid, cleanRoll, maskEmail, maskPhone, safeBaseName } from "./cleaning";
+import { cleanGrid, cleanRoll, formatForWebPortal, maskEmail, maskPhone, safeBaseName } from "./cleaning";
 
 describe("cleaning rules", () => {
   it("masks email local parts while preserving domains", () => {
@@ -24,4 +24,14 @@ describe("cleaning rules", () => {
     expect(result.rows[1]).toEqual(["A", "018*****577", "jas*******261@gmail.com", "00200000"]);
   });
   it("sanitizes download names", () => expect(safeBaseName("my:file.xlsx")).toBe("my-file"));
+  it("formats correctly for web portal without masking", () => {
+    const grid = [
+      [" Student Name ", " PHONE", "Email ", "ROLL", " paid amount "],
+      ["Mostafa Kamal", " +88-01712-345 678 ", "jasminalam261@gmail.com", "27-26048-1", 3999]
+    ];
+    const result = formatForWebPortal(grid, "Morning");
+    expect(result.rows[0]).toEqual(["roll_number", "name", "mobile", "batch"]);
+    expect(result.rows[1]).toEqual(["27260481", "Mostafa Kamal", "8801712345678", "Morning"]);
+  });
 });
+

@@ -62,3 +62,67 @@ export function safeBaseName(name) {
   const cleaned = String(name || "cleaned_students").replace(/\.(xlsx|pdf)$/i, "").replace(/[\\/:*?"<>|]/g, "-").trim();
   return cleaned || "cleaned_students";
 }
+
+export function formatForWebPortal(grid, defaultBatch = "") {
+  const rows = grid.map((row) => [...row]);
+  const headerIndex = rows.findIndex((row) => row.some((cell) => {
+    const norm = normalizeHeader(cell);
+    return norm.includes("roll") || norm.includes("id") || norm.includes("name") || norm.includes("phone") || norm.includes("mobile") || norm.includes("contact");
+  }));
+
+  if (headerIndex < 0) {
+    return {
+      rows: [["roll_number", "name", "mobile", "batch"]],
+      warnings: ["No supported headers (roll, name, or phone) were found on this sheet."],
+      stats: { emails: 0, phones: 0, rolls: 0, removed: false },
+      headerIndex: 0
+    };
+  }
+
+  const headers = rows[headerIndex].map(normalizeHeader);
+  const rollColIndex = headers.findIndex(h => h.includes("roll") || h.includes("id"));
+  const nameColIndex = headers.findIndex(h => h.includes("name"));
+  const mobileColIndex = headers.findIndex(h => h.includes("phone") || h.includes("mobile") || h.includes("contact"));
+
+  const warnings = [];
+  if (rollColIndex < 0) warnings.push("Could not find a Roll/ID column.");
+  if (nameColIndex < 0) warnings.push("Could not find a Name column.");
+  if (mobileColIndex < 0) warnings.push("Could not find a Phone/Mobile column.");
+
+  const webRows = [["roll_number", "name", "mobile", "batch"]];
+  const stats = { emails: 0, phones: 0, rolls: 0, removed: false };
+
+  for (let r = headerIndex + 1; r < rows.length; r += 1) {
+    const rawRoll = rollColIndex >= 0 ? rows[r][rollColIndex] : "";
+    const rawName = nameColIndex >= 0 ? rows[r][nameColIndex] : "";
+    const rawMobile = mobileColIndex >= 0 ? rows[r][mobileColIndex] : "";
+
+    // Clean roll number (do not mask, pad to 8 digits)
+    const cleanedRollResult = cleanRoll(rawRoll);
+    let rollVal = cleanedRollResult.value;
+    if (String(rollVal) !== String(rawRoll)) {
+      stats.rolls += 1;
+    }
+    if (cleanedRollResult.warning) {
+      warnings.push(`Row ${r + 1}: ${cleanedRollResult.warning}`);
+    }
+
+    // Clean mobile number (do not mask): remove spaces, hyphens, parentheses, leading '+'
+    let mobileVal = "";
+    if (rawMobile != null && String(rawMobile).trim() !== "" && String(rawMobile).trim().toUpperCase() !== "N/A") {
+      mobileVal = String(rawMobile).replace(/[-\s()+]/g, "").trim();
+    } else {
+      mobileVal = isBlankOrNA(rawMobile) ? "" : String(rawMobile).trim();
+    }
+
+    webRows.push([
+      rollVal,
+      rawName != null ? String(rawName).trim() : "",
+      mobileVal,
+      defaultBatch
+    ]);
+  }
+
+  return { rows: webRows, warnings, stats, headerIndex: 0 };
+}
+

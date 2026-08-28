@@ -4,7 +4,7 @@ import ExcelJS from "exceljs";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Check, ChevronDown, Download, FileSpreadsheet, FileText, LockKeyhole, Pencil, RotateCcw, Sparkles, Upload } from "lucide-react";
-import { cleanGrid, normalizeHeader, safeBaseName } from "./cleaning";
+import { cleanGrid, formatForWebPortal, normalizeHeader, safeBaseName } from "./cleaning";
 import "./styles.css";
 
 const readRows = (worksheet) => {
@@ -24,7 +24,10 @@ function App() {
   const inputRef = useRef(null);
   const [source, setSource] = useState(null);
   const [workbook, setWorkbook] = useState(null);
-  const [sheets, setSheets] = useState([]);
+  const [exportMode, setExportMode] = useState("standard"); // "standard" or "web_portal"
+  const [defaultBatch, setDefaultBatch] = useState("Morning");
+  const [standardSheets, setStandardSheets] = useState([]);
+  const [webSheets, setWebSheets] = useState([]);
   const [activeSheet, setActiveSheet] = useState(0);
   const [fileName, setFileName] = useState("cleaned_students");
   const [editing, setEditing] = useState(false);
@@ -32,11 +35,13 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const sheets = exportMode === "standard" ? standardSheets : webSheets;
+
   const summary = useMemo(() => sheets.reduce((acc, sheet) => ({
     rows: acc.rows + Math.max(0, sheet.rows.length - (sheet.headerIndex ?? 0) - 1),
-    emails: acc.emails + sheet.stats.emails,
-    phones: acc.phones + sheet.stats.phones,
-    rolls: acc.rolls + sheet.stats.rolls,
+    emails: acc.emails + (sheet.stats.emails || 0),
+    phones: acc.phones + (sheet.stats.phones || 0),
+    rolls: acc.rolls + (sheet.stats.rolls || 0),
     warnings: acc.warnings + sheet.warnings.length,
   }), { rows: 0, emails: 0, phones: 0, rolls: 0, warnings: 0 }), [sheets]);
 
@@ -47,18 +52,41 @@ function App() {
       const bytes = await file.arrayBuffer();
       const nextWorkbook = new ExcelJS.Workbook();
       await nextWorkbook.xlsx.load(bytes);
-      const parsed = nextWorkbook.worksheets.map((worksheet) => ({ name: worksheet.name, ...cleanGrid(readRows(worksheet)) }));
-      if (!parsed.length) throw new Error("The workbook has no worksheets.");
-      setSource(file); setWorkbook(nextWorkbook); setSheets(parsed); setActiveSheet(0); setEditing(false);
+      
+      const rawRowsArray = nextWorkbook.worksheets.map((worksheet) => readRows(worksheet));
+      const parsedStandard = nextWorkbook.worksheets.map((worksheet, idx) => ({ name: worksheet.name, ...cleanGrid(rawRowsArray[idx]) }));
+      const parsedWeb = nextWorkbook.worksheets.map((worksheet, idx) => ({ name: worksheet.name, ...formatForWebPortal(rawRowsArray[idx], defaultBatch) }));
+
+      if (!parsedStandard.length) throw new Error("The workbook has no worksheets.");
+      setSource(file);
+      setWorkbook(nextWorkbook);
+      setStandardSheets(parsedStandard);
+      setWebSheets(parsedWeb);
+      setActiveSheet(0);
+      setEditing(false);
       setFileName(`cleaned_${file.name.replace(/\.xlsx$/i, "")}`);
     } catch (cause) { setError(cause?.message || "This workbook could not be read."); }
     finally { setBusy(false); }
   }
 
   function updateCell(rowIndex, columnIndex, value) {
-    setSheets((current) => current.map((sheet, index) => index === activeSheet
+    const targetSetter = exportMode === "standard" ? setStandardSheets : setWebSheets;
+    targetSetter((current) => current.map((sheet, index) => index === activeSheet
       ? { ...sheet, rows: sheet.rows.map((row, r) => r === rowIndex ? row.map((cell, c) => c === columnIndex ? value : cell) : row) }
       : sheet));
+  }
+
+  function handleBatchChange(value) {
+    setDefaultBatch(value);
+    setWebSheets((current) => current.map((sheet) => ({
+      ...sheet,
+      rows: sheet.rows.map((row, r) => {
+        if (r === 0) return row;
+        const newRow = [...row];
+        newRow[3] = value;
+        return newRow;
+      })
+    })));
   }
 
   function applyRowsToWorkbook() {
@@ -111,6 +139,54 @@ function App() {
     finally { setBusy(false); }
   }
 
+  async function downloadXlsxWebPortal() {
+    setBusy(true); setError("");
+    try {
+      const exportWorkbook = new ExcelJS.Workbook();
+      webSheets.forEach((sheetData) => {
+        const worksheet = exportWorkbook.addWorksheet(sheetData.name);
+        sheetData.rows.forEach((row, r) => {
+          worksheet.addRow(row);
+          if (r > 0) {
+            worksheet.getCell(r + 1, 1).numFmt = "@"; // roll_number
+            worksheet.getCell(r + 1, 3).numFmt = "@"; // mobile
+          }
+        });
+        const columnCount = 4;
+        for (let c = 0; c < columnCount; c += 1) {
+          const longest = Math.max(0, ...sheetData.rows.map((row) => String(row[c] ?? "").length));
+          worksheet.getColumn(c + 1).width = Math.min(48, Math.max(12, longest + 2));
+        }
+        worksheet.eachRow((row) => { row.alignment = { ...row.alignment, vertical: "middle" }; });
+      });
+      const buffer = await exportWorkbook.xlsx.writeBuffer();
+      downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `${safeBaseName(fileName)}.xlsx`);
+    } catch (cause) { setError(cause?.message || "Could not create the Excel file."); }
+    finally { setBusy(false); }
+  }
+
+  function downloadCsv(sheet) {
+    if (!sheet) return;
+    setBusy(true); setError("");
+    try {
+      const csvContent = sheet.rows
+        .map((row) =>
+          row
+            .map((cell) => {
+              const str = String(cell ?? "");
+              if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+                return `"${str.replace(/"/g, '""')}"`;
+              }
+              return str;
+            })
+            .join(",")
+        )
+        .join("\r\n");
+      downloadBlob(new Blob([csvContent], { type: "text/csv;charset=utf-8;" }), `${safeBaseName(fileName)}.csv`);
+    } catch (cause) { setError(cause?.message || "Could not create the CSV file."); }
+    finally { setBusy(false); }
+  }
+
   const current = sheets[activeSheet];
   return <main>
     <header className="topbar"><a className="brand" href="#"><span><Sparkles size={18}/></span> Student File Cleaner</a><div className="privacy"><LockKeyhole size={15}/> Files stay on your device</div></header>
@@ -127,12 +203,25 @@ function App() {
     </section> : <>
       <section className="filebar">
         <div className="filemeta"><span className="excel"><FileSpreadsheet size={21}/></span><div><strong>{source.name}</strong><small>{(source.size / 1024).toFixed(1)} KB • {sheets.length} sheet{sheets.length === 1 ? "" : "s"}</small></div></div>
-        <button className="ghost" onClick={() => { setSource(null); setWorkbook(null); setSheets([]); setError(""); }}><RotateCcw size={16}/> Start over</button>
+        <button className="ghost" onClick={() => { setSource(null); setWorkbook(null); setStandardSheets([]); setWebSheets([]); setError(""); }}><RotateCcw size={16}/> Start over</button>
       </section>
 
+      <div className="mode-tabs">
+        <button className={`tab-btn ${exportMode === "standard" ? "active" : ""}`} onClick={() => { setExportMode("standard"); setEditing(false); }}>
+          Standard Cleaner (Masked)
+        </button>
+        <button className={`tab-btn ${exportMode === "web_portal" ? "active" : ""}`} onClick={() => { setExportMode("web_portal"); setEditing(false); }}>
+          Web Portal Formatter (Unmasked)
+        </button>
+      </div>
+
       <section className="results">
-        <div className="result-title"><div><span className="success"><Check size={18}/></span><div><h2>Your file is clean</h2><p>{summary.rows} student records processed successfully.</p></div></div><button className={`edit-toggle ${editing ? "active" : ""}`} onClick={() => setEditing(!editing)}><Pencil size={15}/>{editing ? "Finish editing" : "Edit data"}</button></div>
-        <div className="metrics"><article><strong>{summary.emails}</strong><span>Emails masked</span></article><article><strong>{summary.phones}</strong><span>Phones masked</span></article><article><strong>{summary.rolls}</strong><span>Rolls cleaned</span></article><article><strong>Removed</strong><span>Paid Amount</span></article></div>
+        <div className="result-title"><div><span className="success"><Check size={18}/></span><div><h2>Your file is {exportMode === "standard" ? "clean" : "ready"}</h2><p>{summary.rows} student records processed successfully.</p></div></div><button className={`edit-toggle ${editing ? "active" : ""}`} onClick={() => setEditing(!editing)}><Pencil size={15}/>{editing ? "Finish editing" : "Edit data"}</button></div>
+        {exportMode === "standard" ? (
+          <div className="metrics"><article><strong>{summary.emails}</strong><span>Emails masked</span></article><article><strong>{summary.phones}</strong><span>Phones masked</span></article><article><strong>{summary.rolls}</strong><span>Rolls cleaned</span></article><article><strong>Removed</strong><span>Paid Amount</span></article></div>
+        ) : (
+          <div className="metrics"><article><strong>{summary.rolls}</strong><span>Rolls standardized</span></article><article><strong>{summary.rows}</strong><span>Total records</span></article><article><strong>Unmasked</strong><span>Contact details</span></article><article><strong>{defaultBatch || "None"}</strong><span>Active Batch</span></article></div>
+        )}
         {summary.warnings > 0 && <div className="warning">{summary.warnings} item{summary.warnings === 1 ? "" : "s"} kept unchanged to prevent data loss.</div>}
       </section>
 
@@ -142,8 +231,27 @@ function App() {
         <div className="table-foot"><span>Showing all {Math.max(0, (current?.rows.length ?? 1) - (current?.headerIndex ?? 0) - 1)} rows</span><span>{current?.name}</span></div>
       </section>
 
-      <section className="downloads"><div className="name-field"><label htmlFor="filename">Output file name</label><div><input id="filename" value={fileName} onChange={(e) => setFileName(e.target.value)}/><span>.xlsx / .pdf</span></div><small>You can rename it before downloading.</small></div>
-        <div className="download-actions"><button className="primary dark" onClick={downloadXlsx} disabled={busy}><Download size={18}/> Download clean XLSX</button><button className="secondary" onClick={downloadPdf} disabled={busy}><FileText size={18}/> Download PDF</button></div>
+      <section className="downloads"><div className="name-field"><label htmlFor="filename">Output file name</label><div><input id="filename" value={fileName} onChange={(e) => setFileName(e.target.value)}/><span>{exportMode === "standard" ? ".xlsx / .pdf" : ".xlsx / .csv"}</span></div><small>You can rename it before downloading.</small></div>
+        {exportMode === "web_portal" && (
+          <div className="batch-field">
+            <label htmlFor="batchname">Default Batch</label>
+            <input id="batchname" value={defaultBatch} onChange={(e) => handleBatchChange(e.target.value)} placeholder="e.g. Morning" />
+            <small>Applied to the 'batch' column.</small>
+          </div>
+        )}
+        <div className="download-actions">
+          {exportMode === "standard" ? (
+            <>
+              <button className="primary dark" onClick={downloadXlsx} disabled={busy}><Download size={18}/> Download clean XLSX</button>
+              <button className="secondary" onClick={downloadPdf} disabled={busy}><FileText size={18}/> Download PDF</button>
+            </>
+          ) : (
+            <>
+              <button className="primary dark" onClick={downloadXlsxWebPortal} disabled={busy}><Download size={18}/> Download Web XLSX</button>
+              <button className="secondary" onClick={() => downloadCsv(current)} disabled={busy}><FileText size={18}/> Download CSV</button>
+            </>
+          )}
+        </div>
       </section>
     </>}
     {error && <div className="error" role="alert">{error}</div>}
