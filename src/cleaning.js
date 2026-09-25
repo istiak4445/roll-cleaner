@@ -146,21 +146,17 @@ export function detectGoogleSheetColumns(headers) {
   let priPhoneIdx = normalized.findIndex((h, idx) => idx !== secPhoneIdx && /(^|\b)(phone|mobile|contact)(\b|$)/i.test(h));
   if (priPhoneIdx < 0) priPhoneIdx = 8;
 
-  // Internal Roll (Col E / Col 4 usually)
-  let rollIdx = normalized.findIndex((h, idx) => idx !== webRollIdx && /(^|\b)roll(\b|$)/i.test(h));
-  if (rollIdx < 0) rollIdx = 4;
-
   // Name (Col F / Col 5 usually)
   let nameIdx = normalized.findIndex((h) => /name/i.test(h));
   if (nameIdx < 0) nameIdx = 5;
 
-  return { webRollIdx, secPhoneIdx, priPhoneIdx, rollIdx, nameIdx };
+  return { webRollIdx, secPhoneIdx, priPhoneIdx, nameIdx };
 }
 
 /**
  * Builds a fast lookup map from Google Sheet CSV text.
  * Rule:
- *  - Primary key is WEB Roll (normalized).
+ *  - Primary key is WEB Roll ONLY (normalized).
  *  - Mobile is taken from Secondary Phone (Col J) first.
  *  - If Secondary Phone is blank, falls back to Primary Phone (Col I).
  */
@@ -177,6 +173,9 @@ export function buildGoogleSheetLookup(csvText, sheetSource = "") {
 
     const rawWebRoll = row[cols.webRollIdx];
     const normWebRoll = normalizeRoll(rawWebRoll);
+
+    // Strictly skip rows that do not have a valid WEB Roll
+    if (!normWebRoll) continue;
 
     const priPhone = cleanMobile(row[cols.priPhoneIdx]);
     const secPhone = cleanMobile(row[cols.secPhoneIdx]);
@@ -198,16 +197,7 @@ export function buildGoogleSheetLookup(csvText, sheetSource = "") {
       rowNumber: r + 1
     };
 
-    if (normWebRoll) {
-      lookup.set(normWebRoll, record);
-    }
-
-    // Also index internal roll as secondary fallback
-    const rawRoll = row[cols.rollIdx];
-    const normRoll = normalizeRoll(rawRoll);
-    if (normRoll && !lookup.has(normRoll)) {
-      lookup.set(normRoll, record);
-    }
+    lookup.set(normWebRoll, record);
   }
 
   return lookup;

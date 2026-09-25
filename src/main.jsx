@@ -641,7 +641,7 @@ function App() {
               {syncingSheets
                 ? "Syncing Google Sheets…"
                 : googleSheetMap.size > 0
-                ? `${googleSheetMap.size} students linked`
+                ? `${googleSheetMap.size} Web Rolls linked`
                 : "Connect Google Sheets"}
             </span>
             <ExternalLink size={13} />
@@ -669,7 +669,7 @@ function App() {
             <strong>
               <Database size={15} /> {googleSheets.length} Google Sheet{googleSheets.length === 1 ? "" : "s"} Active
             </strong>
-            <span>• {googleSheetMap.size} rolls indexed</span>
+            <span>• {googleSheetMap.size} Web Rolls indexed</span>
             {lastSyncedTime && <small className="sync-time">Synced at {lastSyncedTime}</small>}
           </div>
           <div className="sheet-bar-btns">
@@ -1089,7 +1089,7 @@ function App() {
                         <strong>{s.title || "Untitled Sheet"}</strong>
                         {s.isDefault && <span className="default-tag">Default</span>}
                         {s.status === "connected" && (
-                          <span className="count-tag">{s.recordCount || 0} students</span>
+                          <span className="count-tag">{s.recordCount || 0} Web Rolls</span>
                         )}
                         {s.status === "error" && (
                           <span className="error-tag">Sync Failed</span>
