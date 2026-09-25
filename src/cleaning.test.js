@@ -4,6 +4,8 @@ import {
   cleanGrid,
   cleanMobile,
   cleanRoll,
+  combineStandardSheets,
+  combineWebSheets,
   formatForWebPortal,
   maskEmail,
   maskPhone,
@@ -113,5 +115,42 @@ describe("cleaning rules", () => {
     // Unknown Student: not in GSheet, 6 digit roll 100000 normalized to 00100000, keeps uploaded phone
     expect(result.rows[3]).toEqual(["00100000", "Unknown Student", "01811111111", "Morning"]);
     expect(result.phoneSources[3]).toBe("uploaded_fallback");
+  });
+
+  it("merges multiple web sheets into one combined master dataset", () => {
+    const sheet1 = {
+      name: "File 27 • Students",
+      fileName: "File 27.xlsx",
+      rows: [
+        ["roll_number", "name", "mobile", "batch"],
+        ["27260481", "Student 27A", "01711111111", "Morning"],
+        ["27260482", "Student 27B", "01722222222", "Morning"]
+      ],
+      phoneSources: ["header", "gsheet_secondary", "gsheet_primary"],
+      stats: { rolls: 2, matchedCount: 2, secondaryCount: 1, primaryCount: 1, unmatchedCount: 0 }
+    };
+
+    const sheet2 = {
+      name: "File 28 • Students",
+      fileName: "File 28.xlsx",
+      rows: [
+        ["roll_number", "name", "mobile", "batch"],
+        ["28285081", "Student 28A", "01733333333", "Morning"]
+      ],
+      phoneSources: ["header", "gsheet_secondary"],
+      stats: { rolls: 1, matchedCount: 1, secondaryCount: 1, primaryCount: 0, unmatchedCount: 0 }
+    };
+
+    const combined = combineWebSheets([sheet1, sheet2]);
+    expect(combined).toBeDefined();
+    expect(combined.isCombined).toBe(true);
+    expect(combined.rows.length).toBe(4); // 1 header + 3 student records
+    expect(combined.rows[0]).toEqual(["roll_number", "name", "mobile", "batch"]);
+    expect(combined.rows[1]).toEqual(["27260481", "Student 27A", "01711111111", "Morning"]);
+    expect(combined.rows[2]).toEqual(["27260482", "Student 27B", "01722222222", "Morning"]);
+    expect(combined.rows[3]).toEqual(["28285081", "Student 28A", "01733333333", "Morning"]);
+    expect(combined.stats.secondaryCount).toBe(2);
+    expect(combined.stats.primaryCount).toBe(1);
+    expect(combined.stats.rolls).toBe(3);
   });
 });

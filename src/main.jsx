@@ -29,6 +29,8 @@ import {
 import {
   buildGoogleSheetLookup,
   cleanGrid,
+  combineStandardSheets,
+  combineWebSheets,
   formatForWebPortal,
   normalizeHeader,
   safeBaseName,
@@ -188,12 +190,12 @@ function App() {
   }
 
   function reprocessWebSheets(workbooks, gMap, batch) {
-    const updatedWebSheets = [];
+    const individual = [];
     workbooks.forEach((wbData) => {
       wbData.worksheets.forEach((ws) => {
         const displayName =
           workbooks.length > 1 ? `${wbData.fileName} • ${ws.name}` : ws.name;
-        updatedWebSheets.push({
+        individual.push({
           fileName: wbData.fileName,
           sheetName: ws.name,
           name: displayName,
@@ -201,7 +203,13 @@ function App() {
         });
       });
     });
-    setWebSheets(updatedWebSheets);
+
+    let finalWeb = individual;
+    if (individual.length > 1) {
+      const combined = combineWebSheets(individual);
+      finalWeb = [combined, ...individual];
+    }
+    setWebSheets(finalWeb);
   }
 
   async function persistSheets(sheetsList) {
@@ -244,6 +252,20 @@ function App() {
   const sheets = exportMode === "standard" ? standardSheets : webSheets;
 
   const summary = useMemo(() => {
+    if (sheets[0]?.isCombined) {
+      const m = sheets[0];
+      return {
+        rows: Math.max(0, m.rows.length - (m.headerIndex ?? 0) - 1),
+        emails: m.stats?.emails || 0,
+        phones: m.stats?.phones || 0,
+        rolls: m.stats?.rolls || 0,
+        matchedCount: m.stats?.matchedCount || 0,
+        secondaryCount: m.stats?.secondaryCount || 0,
+        primaryCount: m.stats?.primaryCount || 0,
+        unmatchedCount: m.stats?.unmatchedCount || 0,
+        warnings: m.warnings?.length || 0
+      };
+    }
     return sheets.reduce(
       (acc, sheet) => ({
         rows: acc.rows + Math.max(0, sheet.rows.length - (sheet.headerIndex ?? 0) - 1),
@@ -280,8 +302,6 @@ function App() {
     setError("");
     try {
       const workbooksToProcess = append ? [...rawWorkbooksData] : [];
-      const newStandard = append ? [...standardSheets] : [];
-      const newWeb = append ? [...webSheets] : [];
 
       for (const file of xlsxFiles) {
         const bytes = await file.arrayBuffer();
@@ -298,39 +318,57 @@ function App() {
           workbook: nextWorkbook,
           worksheets: worksheetsData
         });
+      }
 
-        worksheetsData.forEach((ws) => {
+      const individualStandard = [];
+      const individualWeb = [];
+
+      workbooksToProcess.forEach((wbData) => {
+        wbData.worksheets.forEach((ws) => {
           const displayName =
-            workbooksToProcess.length > 1 || xlsxFiles.length > 1
-              ? `${file.name} • ${ws.name}`
+            workbooksToProcess.length > 1
+              ? `${wbData.fileName} • ${ws.name}`
               : ws.name;
 
-          newStandard.push({
-            fileName: file.name,
+          individualStandard.push({
+            fileName: wbData.fileName,
             sheetName: ws.name,
             name: displayName,
             ...cleanGrid(ws.rawRows)
           });
 
-          newWeb.push({
-            fileName: file.name,
+          individualWeb.push({
+            fileName: wbData.fileName,
             sheetName: ws.name,
             name: displayName,
             ...formatForWebPortal(ws.rawRows, defaultBatch, googleSheetMap)
           });
         });
+      });
+
+      let finalStandard = individualStandard;
+      if (individualStandard.length > 1) {
+        const combinedStd = combineStandardSheets(individualStandard);
+        finalStandard = [combinedStd, ...individualStandard];
+      }
+
+      let finalWeb = individualWeb;
+      if (individualWeb.length > 1) {
+        const combinedWeb = combineWebSheets(individualWeb);
+        finalWeb = [combinedWeb, ...individualWeb];
       }
 
       setRawWorkbooksData(workbooksToProcess);
-      setStandardSheets(newStandard);
-      setWebSheets(newWeb);
+      setStandardSheets(finalStandard);
+      setWebSheets(finalWeb);
       setActiveSheet(0);
       setEditing(false);
 
-      if (workbooksToProcess.length === 1) {
-        setFileName(`cleaned_${workbooksToProcess[0].fileName.replace(/\.xlsx$/i, "")}`);
+      if (workbooksToProcess.length > 1) {
+        const totalCount = finalWeb[0].rows.length - 1;
+        setFileName(`cleaned_combined_master_${totalCount}_students`);
       } else {
-        setFileName(`cleaned_batch_${workbooksToProcess.length}_files`);
+        setFileName(`cleaned_${workbooksToProcess[0].fileName.replace(/\.xlsx$/i, "")}`);
       }
     } catch (cause) {
       setError(cause?.message || "Could not read workbook file(s).");
@@ -494,11 +532,15 @@ function App() {
       });
 
       const buffer = await exportWorkbook.xlsx.writeBuffer();
+      const outName = currentSheet.isCombined
+        ? `${safeBaseName(fileName)}.xlsx`
+        : `${safeBaseName(fileName)}_${safeBaseName(currentSheet.sheetName || currentSheet.name)}.xlsx`;
+
       downloadBlob(
         new Blob([buffer], {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         }),
-        `${safeBaseName(fileName)}_${safeBaseName(currentSheet.sheetName)}.xlsx`
+        outName
       );
     } catch (cause) {
       setError(cause?.message || "Could not create the Excel file.");
@@ -526,9 +568,14 @@ function App() {
             .join(",")
         )
         .join("\r\n");
+
+      const outName = sheet.isCombined
+        ? `${safeBaseName(fileName)}.csv`
+        : `${safeBaseName(fileName)}_${safeBaseName(sheet.sheetName || sheet.name)}.csv`;
+
       downloadBlob(
         new Blob([csvContent], { type: "text/csv;charset=utf-8;" }),
-        `${safeBaseName(fileName)}_${safeBaseName(sheet.sheetName || sheet.name)}.csv`
+        outName
       );
     } catch (cause) {
       setError(cause?.message || "Could not create the CSV file.");
@@ -797,8 +844,10 @@ function App() {
                   <Check size={18} />
                 </span>
                 <div>
-                  <h2>Your file is {exportMode === "standard" ? "clean" : "ready for Web Portal"}</h2>
-                  <p>{summary.rows} student records across {sheets.length} sheet{sheets.length === 1 ? "" : "s"}.</p>
+                  <h2>Your {sheets[0]?.isCombined ? "Combined Master file" : "file"} is {exportMode === "standard" ? "clean" : "ready for Web Portal"}</h2>
+                  <p>
+                    {summary.rows} student records {sheets[0]?.isCombined ? `merged across ${rawWorkbooksData.length} uploaded files` : `across ${sheets.length} sheet`}.
+                  </p>
                 </div>
               </div>
               <button
@@ -986,34 +1035,29 @@ function App() {
               {exportMode === "standard" ? (
                 <>
                   <button className="primary dark" onClick={downloadXlsxStandard} disabled={busy}>
-                    <Download size={18} /> Download Clean XLSX
+                    <Download size={18} /> {current?.isCombined ? `Download Combined Clean XLSX (${current.rows.length - 1} records)` : "Download Clean XLSX"}
                   </button>
                   <button className="secondary" onClick={downloadPdf} disabled={busy}>
                     <FileText size={18} /> Download PDF
                   </button>
                   {sheets.length > 1 && (
                     <button className="secondary" onClick={downloadAllZip} disabled={busy}>
-                      <FolderArchive size={18} /> Download All (ZIP)
+                      <FolderArchive size={18} /> All Files (.ZIP)
                     </button>
                   )}
                 </>
               ) : (
                 <>
                   <button className="primary dark" onClick={downloadXlsxWebPortal} disabled={busy}>
-                    <Download size={18} /> Download Web XLSX
+                    <Download size={18} /> {current?.isCombined ? `Download Combined Web XLSX (${current.rows.length - 1} records)` : "Download Web XLSX"}
                   </button>
                   <button className="secondary" onClick={() => downloadCsv(current)} disabled={busy}>
-                    <FileText size={18} /> Download CSV
+                    <FileText size={18} /> {current?.isCombined ? "Download Combined CSV" : "Download CSV"}
                   </button>
                   {sheets.length > 1 && (
-                    <>
-                      <button className="primary" onClick={downloadCombinedMasterXlsx} disabled={busy}>
-                        <Layers size={18} /> Combined Master XLSX
-                      </button>
-                      <button className="secondary" onClick={downloadAllZip} disabled={busy}>
-                        <Archive size={18} /> All Sheets (.ZIP)
-                      </button>
-                    </>
+                    <button className="secondary" onClick={downloadAllZip} disabled={busy}>
+                      <Archive size={18} /> All Files (.ZIP)
+                    </button>
                   )}
                 </>
               )}

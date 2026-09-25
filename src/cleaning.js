@@ -339,3 +339,112 @@ export function formatForWebPortal(grid, defaultBatch = "", googleSheetMap = nul
     headerIndex: 0
   };
 }
+
+/**
+ * Automatically merges multiple Web Portal sheets into ONE single Combined Master dataset.
+ */
+export function combineWebSheets(sheetsList) {
+  if (!sheetsList || sheetsList.length === 0) return null;
+  if (sheetsList.length === 1) return sheetsList[0];
+
+  const header = ["roll_number", "name", "mobile", "batch"];
+  const combinedRows = [header];
+  const combinedSources = ["header"];
+  const combinedWarnings = [];
+  const combinedStats = {
+    emails: 0,
+    phones: 0,
+    rolls: 0,
+    removed: false,
+    matchedCount: 0,
+    unmatchedCount: 0,
+    secondaryCount: 0,
+    primaryCount: 0
+  };
+
+  sheetsList.forEach((sheet) => {
+    if (!sheet || !sheet.rows || sheet.rows.length <= 1) return;
+    const dataRows = sheet.rows.slice(1);
+    dataRows.forEach((r, idx) => {
+      combinedRows.push([...r]);
+      const src = sheet.phoneSources ? sheet.phoneSources[idx + 1] : "uploaded_sheet";
+      combinedSources.push(src);
+    });
+
+    if (sheet.warnings && Array.isArray(sheet.warnings)) {
+      sheet.warnings.forEach((w) => combinedWarnings.push(`${sheet.fileName || sheet.name}: ${w}`));
+    }
+
+    if (sheet.stats) {
+      combinedStats.rolls += sheet.stats.rolls || 0;
+      combinedStats.matchedCount += sheet.stats.matchedCount || 0;
+      combinedStats.unmatchedCount += sheet.stats.unmatchedCount || 0;
+      combinedStats.secondaryCount += sheet.stats.secondaryCount || 0;
+      combinedStats.primaryCount += sheet.stats.primaryCount || 0;
+    }
+  });
+
+  return {
+    id: "combined-master-web",
+    fileName: "Combined Master",
+    sheetName: "Master_Web_Portal",
+    name: `⭐ Combined All Files (Master - ${combinedRows.length - 1} records)`,
+    isCombined: true,
+    rows: combinedRows,
+    phoneSources: combinedSources,
+    warnings: combinedWarnings,
+    stats: combinedStats,
+    headerIndex: 0
+  };
+}
+
+/**
+ * Merges multiple Standard cleaned sheets into ONE combined sheet.
+ */
+export function combineStandardSheets(sheetsList) {
+  if (!sheetsList || sheetsList.length === 0) return null;
+  if (sheetsList.length === 1) return sheetsList[0];
+
+  const firstSheet = sheetsList[0];
+  const header = firstSheet.rows[firstSheet.headerIndex ?? 0] || [];
+  const combinedRows = [header];
+  const combinedWarnings = [];
+  const combinedStats = {
+    emails: 0,
+    phones: 0,
+    rolls: 0,
+    removed: false
+  };
+
+  sheetsList.forEach((sheet) => {
+    if (!sheet || !sheet.rows || sheet.rows.length <= 1) return;
+    const dataRows = sheet.rows.slice((sheet.headerIndex ?? 0) + 1);
+    dataRows.forEach((r) => {
+      combinedRows.push([...r]);
+    });
+
+    if (sheet.warnings && Array.isArray(sheet.warnings)) {
+      sheet.warnings.forEach((w) => combinedWarnings.push(`${sheet.fileName || sheet.name}: ${w}`));
+    }
+
+    if (sheet.stats) {
+      combinedStats.emails += sheet.stats.emails || 0;
+      combinedStats.phones += sheet.stats.phones || 0;
+      combinedStats.rolls += sheet.stats.rolls || 0;
+      combinedStats.removed = combinedStats.removed || sheet.stats.removed;
+    }
+  });
+
+  return {
+    id: "combined-master-standard",
+    fileName: "Combined Master",
+    sheetName: "Master_Standard_Cleaned",
+    name: `⭐ Combined All Files (Master - ${combinedRows.length - 1} records)`,
+    isCombined: true,
+    rows: combinedRows,
+    warnings: combinedWarnings,
+    stats: combinedStats,
+    headerIndex: 0
+  };
+}
+
